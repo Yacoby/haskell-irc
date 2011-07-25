@@ -4,8 +4,7 @@
 import Network
 import System.IO
 
-import Control.Monad.State
-import Control.Monad.Reader
+import Control.Monad.Reader hiding (join)
 import Data.Functor.Identity
 
 import Data.List
@@ -18,28 +17,33 @@ server = "irc.imaginarynet.org.uk"
 port   = 6667
 nick   = "KarmaBot"
 user   = "KarmaBot"
-name   = "Yacoby v2"
 
 -- -----------------------------------------------------------------------------
 
-data IrcStream = IrcStream { irc :: Handle } 
+data Network = Network { socket :: Handle } 
 
-type IrcLogger = ReaderT IrcStream IO
+type Net = ReaderT Network IO
 
 main :: IO ()
 main  = do
     h <- connect server port nick user
     runBot ircOutput h
 
-ircOutput :: Response -> IrcLogger ()
-ircOutput (Response _ (IntCmd "004" _ msg)) = write "JOIN #yac"
+ircOutput :: Response -> Net ()
+ircOutput (Response _ (IntCmd "004" _ msg)) = join "yac"
 ircOutput _                                 = return ()
+
+-- ----------------------------------------------------------------------------
+-- IRC Commands
+
+join :: String -> Net ()
+join chan = write $ "JOIN #" ++ chan
 
 -- -----------------------------------------------------------------------------
 -- Lower level irc stuff
 
-runBot :: (Response -> IrcLogger ()) -> Handle -> IO ()
-runBot output handle = runReaderT (mainLoop output) (IrcStream handle)
+--runBot :: (Response -> Net ()) -> Handle -> Net ()
+runBot output handle = runReaderT (mainLoop output) (Network handle)
 
 connect :: String -> Int -> String -> String -> IO Handle
 connect server port nick name = do
@@ -49,16 +53,16 @@ connect server port nick name = do
     hPutStrLn h $ "USER " ++ nick ++ " 0 * :" ++ name
     return h
 
-mainLoop :: (Response -> IrcLogger () ) -> IrcLogger ()
+mainLoop :: (Response -> Net() ) -> Net()
 mainLoop outfunc = forever $ do
-    h <- asks irc
+    h <- asks socket 
     line <- liftIO $ hGetLine h
     liftIO $ putStrLn line
     maybeDispatch outfunc $ parseMessage line
     where
         forever a = a >> forever a
 
-maybeDispatch :: (Response -> IrcLogger() ) -> Maybe Response -> IrcLogger ()
+maybeDispatch :: (Response -> Net() ) -> Maybe Response -> Net()
 maybeDispatch outputf response = maybe deflt processMessage response
     where
         --default, general debug
@@ -66,13 +70,13 @@ maybeDispatch outputf response = maybe deflt processMessage response
 
         --we don't need to see the pong any higher up, there is no point
         --as it just adds complexity to higher levels
-        processMessage :: Response -> IrcLogger ()
+        processMessage :: Response -> Net()
         processMessage (Response _ (Ping  m)) = write $ "PONG :" ++ m
         processMessage response               = outputf response
 
-write :: String -> IrcLogger ()
+write :: String -> Net()
 write msg = do
-    h <- asks irc
+    h <- asks socket 
     liftIO $ hPutStrLn h msg
 
     --debug
