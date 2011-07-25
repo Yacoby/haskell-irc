@@ -5,7 +5,6 @@ import Network
 import System.IO
 
 import Control.Monad.Reader hiding (join)
-import Data.Functor.Identity
 
 import Data.List
 
@@ -17,6 +16,7 @@ server = "irc.imaginarynet.org.uk"
 port   = 6667
 nick   = "KarmaBot"
 user   = "KarmaBot"
+chan   = "yac"
 
 -- -----------------------------------------------------------------------------
 
@@ -30,7 +30,7 @@ main  = do
     runBot ircOutput h
 
 ircOutput :: Response -> Net ()
-ircOutput (Response _ (IntCmd "004" _ msg)) = join "yac"
+ircOutput (Response _ (IntCmd "004" _ msg)) = join chan
 ircOutput _                                 = return ()
 
 -- ----------------------------------------------------------------------------
@@ -42,7 +42,7 @@ join chan = write $ "JOIN #" ++ chan
 -- -----------------------------------------------------------------------------
 -- Lower level irc stuff
 
---runBot :: (Response -> Net ()) -> Handle -> Net ()
+runBot :: (Response -> Net ()) -> Handle -> IO ()
 runBot output handle = runReaderT (mainLoop output) (Network handle)
 
 connect :: String -> Int -> String -> String -> IO Handle
@@ -53,7 +53,7 @@ connect server port nick name = do
     hPutStrLn h $ "USER " ++ nick ++ " 0 * :" ++ name
     return h
 
-mainLoop :: (Response -> Net() ) -> Net()
+mainLoop :: (Response -> Net()) -> Net()
 mainLoop outfunc = forever $ do
     h <- asks socket 
     line <- liftIO $ hGetLine h
@@ -114,45 +114,37 @@ data Message = Ping String
              | IntCmd { intCmd :: String, destination :: String, contents :: String }
              deriving (Show, Eq)
 
+
+-- Parses commands, by this point the host has been removed so we just have
+-- the command left
+strArg = do
+    a <- many1 $ noneOf " "
+    option "" ( string " " )
+    return a
+
+remStrArg = many anyChar
+
 cmdPrivateMsg = do
     string "PRIVMSG "
-    dest <- many $ noneOf " "
-    string " :"
-    msg <- many anyChar
-    return $ PrivateMsg dest msg
+    liftM2 PrivateMsg strArg (string " :" >> remStrArg)
 
 cmdPing = do
     string "PING :"
-    msg <- many alphaNum
-    return $ Ping msg
+    liftM Ping remStrArg
 
-cmdInt = do
-    num <- many digit
-    char ' '
-    dest <- many (noneOf " ")
-    char ' '
-    rest <- many anyChar
-    return $ IntCmd num dest rest
+cmdInt = liftM3 IntCmd strArg strArg remStrArg
 
 cmdNotice = do
     string "NOTICE "
-    nick <- many (noneOf " ")
-    char ' '
-    text <- many anyChar
-    return $ Notice nick text
+    liftM2 Notice strArg remStrArg
 
-cmd = try cmdNotice <|>
-      try cmdPing <|>
-      try cmdInt  <|>
-      cmdPrivateMsg
-
-cmdMsg = do
-    host <- optionMaybe hostMask
-    msg <- cmd
-    return $ Response host msg
-
+tryCommands = foldl1 (<|>) . map try
 
 parseMessage :: String -> Maybe Response
-parseMessage msg = case parse cmdMsg "" msg of
+parseMessage msg = case parse parser "" msg of
                     Left e  -> Nothing
                     Right r -> Just r
+            where
+                commands = tryCommands [cmdNotice, cmdPing,
+                                        cmdInt, cmdPrivateMsg]
+                parser = liftM2 Response (optionMaybe hostMask) commands
