@@ -4,6 +4,7 @@
 import Network
 import System.IO
 
+import Control.Monad
 import Control.Monad.Reader hiding (join)
 
 import Data.List
@@ -42,6 +43,8 @@ join chan = write $ "JOIN #" ++ chan
 -- -----------------------------------------------------------------------------
 -- Lower level irc stuff
 
+debug  = True
+
 runBot :: (Response -> Net ()) -> Handle -> IO ()
 runBot output handle = runReaderT (mainLoop output) (Network handle)
 
@@ -57,16 +60,14 @@ mainLoop :: (Response -> Net()) -> Net()
 mainLoop outfunc = forever $ do
     h <- asks socket 
     line <- liftIO $ hGetLine h
-    liftIO $ putStrLn line
+    when debug (liftIO $ putStrLn ("<<" ++ line))
     maybeDispatch outfunc $ parseMessage line
-    where
-        forever a = a >> forever a
 
 maybeDispatch :: (Response -> Net() ) -> Maybe Response -> Net()
 maybeDispatch outputf response = maybe deflt processMessage response
     where
         --default, general debug
-        deflt = liftIO $ putStrLn "++PARSE FAIL++"
+        deflt = when debug (liftIO $ putStrLn "\tFailed parsing previous line")
 
         --we don't need to see the pong any higher up, there is no point
         --as it just adds complexity to higher levels
@@ -78,9 +79,7 @@ write :: String -> Net()
 write msg = do
     h <- asks socket 
     liftIO $ hPutStrLn h msg
-
-    --debug
-    liftIO $ putStrLn $ ">>" ++ msg
+    when debug (liftIO $ putStrLn $ ">>" ++ msg)
 
 -- --------------------------------
 -- Simple mesage parser, very basic
