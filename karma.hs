@@ -82,7 +82,6 @@ write msg = do
     --debug
     liftIO $ putStrLn $ ">>" ++ msg
 
-
 -- --------------------------------
 -- Simple mesage parser, very basic
 
@@ -117,10 +116,13 @@ data Message = Ping String
 
 -- Parses commands, by this point the host has been removed so we just have
 -- the command left
-strArg = do
-    a <- many1 $ noneOf " "
+arg p = do
+    a <- many1 p
     option "" ( string " " )
     return a
+
+digitArg = arg  digit 
+strArg = arg (noneOf " ")
 
 remStrArg = many anyChar
 
@@ -132,7 +134,7 @@ cmdPing = do
     string "PING :"
     liftM Ping remStrArg
 
-cmdInt = liftM3 IntCmd strArg strArg remStrArg
+cmdInt = liftM3 IntCmd digitArg strArg remStrArg
 
 cmdNotice = do
     string "NOTICE "
